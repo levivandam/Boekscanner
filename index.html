@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Boekscanner">
+<meta name="theme-color" content="#0f1312">
+<title>Boekscanner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+/* Eén donker uiterlijk, bewust: de app draait naast een camerabeeld */
+:root {
+  --bg: #0f1312; --panel: #181e1c; --line: #2a3330; --fg: #eef2ef; --muted: #98a59f;
+  --go: #3ddc97; --go-ink: #06140e; --warn: #ffb35c; --bad: #ff6b6b;
+  color-scheme: dark;
+  --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif }
+button { font: inherit; color: inherit; border: 0; cursor: pointer }
+[hidden] { display: none !important }
+
+/* ---------- start / overzicht ---------- */
+#home { min-height: 100%; padding: calc(var(--sat) + 20px) max(16px, var(--sar)) calc(var(--sab) + 24px) max(16px, var(--sal));
+  display: flex; flex-direction: column; gap: 20px; max-width: 640px; margin: 0 auto }
+h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
+.sub { color: var(--muted); margin: 2px 0 0; font-size: 15px }
+.big { width: 100%; padding: 18px; border-radius: 14px; background: var(--go); color: var(--go-ink); font-size: 19px; font-weight: 700 }
+.sec { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: grid; gap: 12px }
+.sec h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px }
+.row label { flex: 1 }
+.row small { display: block; color: var(--muted); font-size: 13px }
+.seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px }
+.seg button { padding: 7px 11px; border-radius: 7px; background: transparent; font-size: 14px; color: var(--muted) }
+.seg button[aria-pressed="true"] { background: var(--line); color: var(--fg); font-weight: 600 }
+.btn { padding: 11px 14px; border-radius: 10px; background: var(--line); font-weight: 600; font-size: 15px }
+.btn.danger { color: var(--bad) }
+.count { font-variant-numeric: tabular-nums; font-weight: 700 }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px }
+.thumb { position: relative; aspect-ratio: 3 / 4; background: #000; border-radius: 6px; overflow: hidden; padding: 0 }
+.thumb img { width: 100%; height: 100%; object-fit: contain; display: block }
+.thumb span { position: absolute; left: 4px; top: 4px; background: rgba(0,0,0,.7); font-size: 11px; padding: 1px 5px; border-radius: 4px; font-variant-numeric: tabular-nums }
+.thumb.ask::after { content: "Tik nog eens om te verwijderen"; position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+  background: rgba(160,30,30,.85); font-size: 12px; font-weight: 600; padding: 6px }
+.batches { display: grid; gap: 8px }
+.note { color: var(--muted); font-size: 13px; margin: 0 }
+
+/* ---------- scannen ---------- */
+#scan { position: fixed; inset: 0; background: #000 }
+#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain }
+#flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .35s }
+#flash.on { opacity: .8; transition: none }
+.hud { position: absolute; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding-left: max(14px, var(--sal)); padding-right: max(14px, var(--sar)) }
+.hud.top { top: 0; padding-top: calc(var(--sat) + 10px) }
+.hud.bottom { bottom: 0; padding-bottom: calc(var(--sab) + 14px) }
+.pill { background: rgba(0,0,0,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 999px; padding: 8px 14px; font-size: 15px }
+#counter { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; padding: 4px 18px }
+#state { display: flex; align-items: center; gap: 8px; font-weight: 600 }
+#dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted) }
+#meter { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--sab) + 84px); width: min(60vw, 260px); height: 6px;
+  border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden }
+#meterFill { height: 100%; width: 0; background: var(--go); transition: width .12s linear }
+.hudbtn { background: rgba(0,0,0,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 12px; padding: 13px 16px; font-weight: 700 }
+.hudbtn.go { background: var(--go); color: var(--go-ink) }
+#err { position: absolute; inset: auto 16px 50% 16px; background: var(--panel); border: 1px solid var(--bad); border-radius: 12px; padding: 16px }
+</style>
+</head>
+<body>
+
+<main id="home">
+  <header>
+    <h1>Boekscanner</h1>
+    <p class="sub">Leg je telefoon boven het boek, druk op Start en sla alleen de pagina's om.</p>
+  </header>
+
+  <button class="big" id="startBtn">Start met scannen</button>
+
+  <section class="sec">
+    <h2>Instellingen</h2>
+    <div class="row">
+      <label>Per scan<small>Een opengeslagen boek wordt bij export in twee pagina's gesplitst</small></label>
+      <div class="seg" data-key="split"><button data-v="1">2 pag.</button><button data-v="0">1 pag.</button></div>
+    </div>
+    <div class="row">
+      <label>Draaien bij export<small>Als je scans op hun kant liggen</small></label>
+      <div class="seg" data-key="rotate"><button data-v="0">0°</button><button data-v="90">90°</button><button data-v="180">180°</button><button data-v="270">270°</button></div>
+    </div>
+    <div class="row">
+      <label>Wachttijd<small>Hoe lang het beeld stil moet zijn voor een scan</small></label>
+      <div class="seg" data-key="wait"><button data-v="500">kort</button><button data-v="800">normaal</button><button data-v="1200">lang</button></div>
+    </div>
+    <div class="row">
+      <label>Gevoeligheid<small>Hoger als hij omslaan mist, lager bij dubbele scans</small></label>
+      <div class="seg" data-key="sens"><button data-v="laag">laag</button><button data-v="normaal">normaal</button><button data-v="hoog">hoog</button></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="row"><h2>Scans</h2><span class="count" id="total">0</span></div>
+    <div class="grid" id="grid"></div>
+    <p class="note" id="emptyNote">Nog geen scans. Tik een scan twee keer aan om hem te verwijderen.</p>
+  </section>
+
+  <section class="sec">
+    <h2>Exporteren als PDF</h2>
+    <p class="note">Per blok van 40 scans, zodat je iPhone het geheugen aankan. Bewaar de PDF's in Bestanden of iCloud en zet ze op je pc.</p>
+    <div class="batches" id="batches"></div>
+    <div class="row"><span class="note" id="expStatus"></span></div>
+  </section>
+
+  <section class="sec">
+    <h2>Opruimen</h2>
+    <div class="row"><span class="note">Verwijdert alle scans van deze telefoon.</span><button class="btn danger" id="clearBtn">Alles wissen</button></div>
+  </section>
+</main>
+
+<section id="scan" hidden>
+  <video id="video" playsinline muted autoplay></video>
+  <div id="flash"></div>
+  <div class="hud top">
+    <span class="pill" id="counter">0</span>
+    <span class="pill" id="state"><span id="dot"></span><span id="stateText">Camera starten…</span></span>
+  </div>
+  <div id="meter"><div id="meterFill"></div></div>
+  <div class="hud bottom">
+    <button class="hudbtn" id="pauseBtn">Pauze</button>
+    <span class="pill" id="res"></span>
+    <button class="hudbtn" id="shotBtn">Scan nu</button>
+    <button class="hudbtn go" id="stopBtn">Klaar</button>
+  </div>
+  <div id="err" hidden></div>
+</section>
+
+<script src="jspdf.umd.min.js"></script>
+<script>
+"use strict";
+// ---------- instellingen ----------
+const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal" };
+let cfg = { ...DEF };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem("bs-cfg") || "{}")); } catch (e) {}
+const SENS = { // gemiddeld verschil per pixel (0-255) tussen opeenvolgende kleine beelden
+  laag:    { move: 12, still: 2.0, change: 5.0 },
+  normaal: { move: 8,  still: 2.5, change: 3.5 },
+  hoog:    { move: 5,  still: 3.0, change: 2.5 },
+};
+document.querySelectorAll(".seg").forEach(seg => {
+  const key = seg.dataset.key;
+  const paint = () => seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === cfg[key])));
+  seg.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    cfg[key] = b.dataset.v; paint();
+    try { localStorage.setItem("bs-cfg", JSON.stringify(cfg)); } catch (e) {}
+    if (key === "rotate") renderGrid();
+  });
+  paint();
+});
+
+// ---------- opslag (IndexedDB: overleeft het sluiten van de app) ----------
+const dbp = new Promise((res, rej) => {
+  const r = indexedDB.open("boekscanner", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("scans", { keyPath: "id", autoIncrement: true });
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+async function tx(mode, fn) {
+  const db = await dbp;
+  return new Promise((res, rej) => {
+    const t = db.transaction("scans", mode), st = t.objectStore("scans");
+    const out = fn(st); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error);
+  });
+}
+const addScan = rec => tx("readwrite", st => st.add(rec));
+const delScan = id => tx("readwrite", st => st.delete(id));
+const clearScans = () => tx("readwrite", st => st.clear());
+async function allScans(withFull) {
+  const db = await dbp;
+  return new Promise((res, rej) => {
+    const out = [], t = db.transaction("scans", "readonly");
+    t.objectStore("scans").openCursor().onsuccess = e => {
+      const c = e.target.result;
+      if (c) { const v = c.value; out.push(withFull ? v : { id: v.id, thumb: v.thumb }); c.continue(); } else res(out);
+    };
+    t.onerror = () => rej(t.error);
+  });
+}
+async function getScan(id) { return tx("readonly", st => st.get(id)); }
+
+// ---------- overzicht ----------
+const $ = id => document.getElementById(id);
+let urls = [];
+async function renderGrid() {
+  urls.forEach(u => URL.revokeObjectURL(u)); urls = [];
+  const scans = await allScans(false);
+  $("total").textContent = scans.length;
+  $("emptyNote").hidden = scans.length > 0;
+  const g = $("grid"); g.innerHTML = "";
+  scans.forEach((s, i) => {
+    const b = document.createElement("button"); b.className = "thumb";
+    const u = URL.createObjectURL(s.thumb); urls.push(u);
+    b.innerHTML = `<img alt="Scan ${i + 1}" src="${u}" style="transform:rotate(${cfg.rotate}deg)"><span>${i + 1}</span>`;
+    b.onclick = async () => {
+      if (b.classList.contains("ask")) { await delScan(s.id); renderGrid(); }
+      else { document.querySelectorAll(".thumb.ask").forEach(x => x.classList.remove("ask")); b.classList.add("ask"); setTimeout(() => b.classList.remove("ask"), 3000); }
+    };
+    g.appendChild(b);
+  });
+  const bt = $("batches"); bt.innerHTML = "";
+  for (let i = 0; i < scans.length; i += 40) {
+    const a = i + 1, z = Math.min(i + 40, scans.length);
+    const b = document.createElement("button"); b.className = "btn";
+    b.textContent = `PDF van scan ${a}–${z}`;
+    b.onclick = () => exportBatch(scans.slice(i, z).map(s => s.id), a, z, b);
+    bt.appendChild(b);
+  }
+}
+let clearArmed = false;
+$("clearBtn").onclick = async () => {
+  const b = $("clearBtn");
+  if (!clearArmed) { clearArmed = true; b.textContent = "Zeker weten? Tik nog eens"; setTimeout(() => { clearArmed = false; b.textContent = "Alles wissen"; }, 4000); return; }
+  clearArmed = false; b.textContent = "Alles wissen"; await clearScans(); renderGrid();
+};
+
+// ---------- geluid ----------
+let actx = null;
+function unlockAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {} // ook geluid met stille modus aan
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {}
+}
+function beep(freq = 1175, len = 0.14) {
+  if (!actx) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = "sine"; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + len + 0.02);
+}
+
+// ---------- scherm aan houden ----------
+let wakeLock = null;
+async function keepAwake() { try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running) keepAwake(); });
+
+// ---------- camera en automatisch scannen ----------
+const video = $("video");
+const small = document.createElement("canvas"), sctx = small.getContext("2d", { willReadFrequently: true });
+let stream = null, running = false, paused = false, timer = null;
+let prev = null, lastShot = null, state = "first", stillSince = 0, count = 0;
+const TICK = 120;
+
+function setState(kind, text) {
+  $("stateText").textContent = text;
+  $("dot").style.background = { wait: "var(--muted)", hold: "var(--warn)", shot: "var(--go)", pause: "var(--bad)" }[kind];
+}
+function gray() {
+  const w = 96, h = Math.round(96 * video.videoHeight / video.videoWidth) || 72;
+  if (small.width !== w || small.height !== h) { small.width = w; small.height = h; }
+  sctx.drawImage(video, 0, 0, w, h);
+  const d = sctx.getImageData(0, 0, w, h).data, g = new Uint8Array(w * h);
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+  return g;
+}
+const diff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+
+function tick() {
+  if (!running) return;
+  timer = setTimeout(tick, TICK);
+  if (paused || video.readyState < 2 || !video.videoWidth) return;
+  const s = SENS[cfg.sens] || SENS.normaal, need = +cfg.wait;
+  const cur = gray(), d = prev ? diff(prev, cur) : 99; prev = cur;
+  const now = performance.now();
+  if (state === "waiting") {                       // na een scan: wacht tot er een hand / pagina beweegt
+    $("meterFill").style.width = "0%";
+    if (d > s.move) { state = "moving"; setState("hold", "Pagina wordt omgeslagen…"); }
+    return;
+  }
+  // "first" of "moving": wacht tot het beeld stil ligt
+  if (d < s.still) {
+    if (!stillSince) stillSince = now;
+    const pct = Math.min(100, (now - stillSince) / need * 100);
+    $("meterFill").style.width = pct + "%";
+    if (now - stillSince >= need) {
+      stillSince = 0;
+      if (!lastShot || diff(lastShot, cur) > s.change) { lastShot = cur; capture(); }
+      else setState("wait", "Zelfde pagina, sla om");    // beweging zonder nieuwe pagina: niet dubbel scannen
+      state = "waiting";
+    }
+  } else { stillSince = 0; $("meterFill").style.width = "0%"; if (state === "moving") setState("hold", "Pagina wordt omgeslagen…"); }
+}
+
+async function capture() {
+  const c = document.createElement("canvas");
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0);
+  const full = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9));
+  const t = document.createElement("canvas"), k = 320 / Math.max(c.width, c.height);
+  t.width = Math.round(c.width * k); t.height = Math.round(c.height * k);
+  t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
+  const thumb = await new Promise(r => t.toBlob(r, "image/jpeg", 0.7));
+  await addScan({ full, thumb, w: c.width, h: c.height, ts: Date.now() });
+  count++; $("counter").textContent = count;
+  beep();
+  const f = $("flash"); f.classList.add("on"); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+  setState("shot", "Gescand · sla om");
+}
+
+async function startScan() {
+  unlockAudio();
+  $("home").hidden = true; $("scan").hidden = false; $("err").hidden = true;
+  count = (await allScans(false)).length; $("counter").textContent = count;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
+  } catch (e) {
+    $("err").hidden = false;
+    $("err").textContent = "De camera kon niet starten. Geef de app toegang tot de camera (Instellingen › Safari › Camera) en probeer opnieuw. (" + e.name + ")";
+    return;
+  }
+  video.srcObject = stream; await video.play().catch(() => {});
+  await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, { once: true }));
+  const long = Math.max(video.videoWidth, video.videoHeight);
+  $("res").textContent = `${video.videoWidth}×${video.videoHeight}` + (long >= 3800 ? " · 4K" : long >= 1900 ? " · Full HD" : " · laag");
+  keepAwake();
+  running = true; paused = false; prev = null; lastShot = null; stillSince = 0; state = "first";
+  setState("hold", "Houd stil voor de eerste scan");
+  tick();
+}
+async function stopScan() {
+  running = false; clearTimeout(timer);
+  if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+  try { wakeLock && wakeLock.release(); } catch (e) {} wakeLock = null;
+  $("scan").hidden = true; $("home").hidden = false; renderGrid();
+}
+$("startBtn").onclick = startScan;
+$("stopBtn").onclick = stopScan;
+$("shotBtn").onclick = () => { if (running && video.videoWidth) { lastShot = gray(); capture(); state = "waiting"; } };
+$("pauseBtn").onclick = () => {
+  paused = !paused; $("pauseBtn").textContent = paused ? "Verder" : "Pauze";
+  if (paused) setState("pause", "Gepauzeerd"); else { state = "waiting"; prev = null; setState("wait", "Sla om om verder te gaan"); }
+};
+
+// ---------- export naar PDF ----------
+async function pagesOf(rec) {
+  const bmp = await createImageBitmap(rec.full);
+  const rot = +cfg.rotate, swap = rot === 90 || rot === 270;
+  const W = swap ? bmp.height : bmp.width, H = swap ? bmp.width : bmp.height;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const x = c.getContext("2d"); x.translate(W / 2, H / 2); x.rotate(rot * Math.PI / 180); x.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+  bmp.close && bmp.close();
+  const parts = [];
+  if (cfg.split === "1") {                                   // links en rechts van de rug
+    const half = Math.floor(W / 2);
+    for (const sx of [0, half]) {
+      const p = document.createElement("canvas"); p.width = half; p.height = H;
+      p.getContext("2d").drawImage(c, sx, 0, half, H, 0, 0, half, H); parts.push(p);
+    }
+  } else parts.push(c);
+  return parts;
+}
+async function exportBatch(ids, a, z, btn) {
+  btn.disabled = true; const old = btn.textContent;
+  try {
+    const { jsPDF } = window.jspdf; let doc = null;
+    for (let i = 0; i < ids.length; i++) {
+      $("expStatus").textContent = `Bezig: scan ${a + i} van ${z}…`;
+      const rec = await getScan(ids[i]);
+      for (const p of await pagesOf(rec)) {
+        const pw = p.width * 72 / 300, ph = p.height * 72 / 300;       // paginaformaat bij ~300 dpi
+        const o = pw > ph ? "l" : "p";
+        if (!doc) doc = new jsPDF({ unit: "pt", format: [pw, ph], orientation: o, compress: true });
+        else doc.addPage([pw, ph], o);
+        doc.addImage(p.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, pw, ph);
+        p.width = p.height = 0;
+      }
+    }
+    const name = `scans-${String(a).padStart(3, "0")}-${String(z).padStart(3, "0")}.pdf`;
+    const file = new File([doc.output("blob")], name, { type: "application/pdf" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      $("expStatus").textContent = "Kies ‘Bewaar in Bestanden’ of AirDrop naar je pc.";
+      await navigator.share({ files: [file], title: name }).catch(() => {});
+    } else {
+      const u = URL.createObjectURL(file), l = document.createElement("a"); l.href = u; l.download = name; l.click();
+    }
+    $("expStatus").textContent = `${name} klaar.`;
+  } catch (e) { $("expStatus").textContent = "Export mislukt: " + e.message; }
+  btn.disabled = false; btn.textContent = old;
+}
+
+// ---------- offline ----------
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+renderGrid();
+</script>
+</body>
+</html>
