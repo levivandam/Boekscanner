@@ -41,6 +41,13 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 .seg button { padding: 7px 11px; border-radius: 7px; background: transparent; font-size: 14px; color: var(--muted) }
 .seg button[aria-pressed="true"] { background: var(--line); color: var(--fg); font-weight: 600 }
 .btn { padding: 11px 14px; border-radius: 10px; background: var(--line); font-weight: 600; font-size: 15px }
+.btn.save { background: var(--go); color: var(--go-ink) }
+.range { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+.range label { color: var(--muted); font-size: 14px }
+.range input { width: 72px; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  font: inherit; font-variant-numeric: tabular-nums }
+.big.save { background: var(--go) }
+.big:disabled, .btn:disabled { opacity: .5 }
 .btn.danger { color: var(--bad) }
 .count { font-variant-numeric: tabular-nums; font-weight: 700 }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px }
@@ -124,16 +131,22 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
   </section>
 
   <section class="sec">
-    <div class="row"><h2>Scans</h2><span class="count" id="total">0</span></div>
-    <div class="grid" id="grid"></div>
-    <p class="note" id="emptyNote">Nog geen scans. Tik een scan twee keer aan om hem te verwijderen.</p>
+    <h2>Exporteren als PDF</h2>
+    <button class="big" id="allBtn" disabled>Exporteer alles</button>
+    <div class="range">
+      <label for="from">Van scan</label><input id="from" type="number" inputmode="numeric" min="1" value="1">
+      <label for="to">t/m</label><input id="to" type="number" inputmode="numeric" min="1" value="1">
+      <button class="btn" id="rangeBtn" disabled>Exporteer selectie</button>
+    </div>
+    <button class="big save" id="saveBtn" hidden></button>
+    <p class="note">Houd de app open tijdens het maken. Daarna tik je op de groene knop om de PDF te bewaren in Bestanden of via AirDrop naar je pc.</p>
+    <div class="row"><span class="note" id="expStatus"></span></div>
   </section>
 
   <section class="sec">
-    <h2>Exporteren als PDF</h2>
-    <p class="note">Per blok van 40 scans, zodat je iPhone het geheugen aankan. Bewaar de PDF's in Bestanden of iCloud en zet ze op je pc.</p>
-    <div class="batches" id="batches"></div>
-    <div class="row"><span class="note" id="expStatus"></span></div>
+    <div class="row"><h2>Scans</h2><span class="count" id="total">0</span></div>
+    <div class="grid" id="grid"></div>
+    <p class="note" id="emptyNote">Nog geen scans. Tik een scan twee keer aan om hem te verwijderen.</p>
   </section>
 
   <section class="sec">
@@ -164,7 +177,6 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
   <div id="err" hidden></div>
 </section>
 
-<script src="jspdf.umd.min.js"></script>
 <script>
 "use strict";
 // ---------- instellingen ----------
@@ -178,9 +190,9 @@ function turnOf(w, h) { return ((cfg.split === "1" && h > w ? 90 : 0) + +cfg.rot
 // Drempels: gemiddeld verschil per pixel (0-255) tussen twee opeenvolgende, sterk verkleinde en vervaagde beelden.
 // move   = zoveel beweging telt als "pagina wordt omgeslagen"
 // still  = daaronder telt het beeld als rustig genoeg voor een scan (in de hand ruimer, door trillen)
-// change = zoveel moet de nieuwe pagina verschillen van de vorige scan
+// change = alleen een vrijwel identiek beeld telt als "zelfde pagina" (liever dubbel dan gemist; dubbele gaan er op de pc uit)
 function limits() {
-  const base = cfg.hold === "stand" ? { move: 8, still: 2.5, change: 3.5 } : { move: 12, still: 4.5, change: 4 };
+  const base = cfg.hold === "stand" ? { move: 8, still: 2.5, change: 0.8 } : { move: 12, still: 4.5, change: 1.2 };
   const k = { laag: 1.35, normaal: 1, hoog: 0.75 }[cfg.sens] || 1;   // hoog = reageert op minder beweging
   return { move: base.move * k, still: base.still * (cfg.hold === "stand" ? 1 : 1 / Math.sqrt(k)), change: base.change };
 }
@@ -229,6 +241,7 @@ async function getScan(id) { return tx("readonly", st => st.get(id)); }
 const $ = id => document.getElementById(id);
 let urls = [];
 async function renderGrid() {
+  if (!busy) { pdfFile = null; }
   urls.forEach(u => URL.revokeObjectURL(u)); urls = [];
   const scans = await allScans(false);
   $("total").textContent = scans.length;
@@ -244,15 +257,16 @@ async function renderGrid() {
     };
     g.appendChild(b);
   });
-  const bt = $("batches"); bt.innerHTML = "";
-  for (let i = 0; i < scans.length; i += 40) {
-    const a = i + 1, z = Math.min(i + 40, scans.length);
-    const b = document.createElement("button"); b.className = "btn";
-    b.textContent = `PDF van scan ${a}–${z}`;
-    b.onclick = () => exportBatch(scans.slice(i, z).map(s => s.id), a, z, b);
-    bt.appendChild(b);
-  }
+  scanIds = scans.map(x => x.id);
+  const n = scans.length;
+  $("allBtn").textContent = n ? `Exporteer alles (${n} scans)` : "Exporteer alles";
+  $("allBtn").disabled = $("rangeBtn").disabled = !n;
+  $("from").max = $("to").max = n || 1;
+  if (+$("to").value > n || +$("to").value < 1 || $("to").dataset.auto !== "0") { $("to").value = Math.max(n, 1); }
+  if (+$("from").value > n || +$("from").value < 1) $("from").value = 1;
+  $("saveBtn").hidden = true;
 }
+let scanIds = [];
 let clearArmed = false;
 $("clearBtn").onclick = async () => {
   const b = $("clearBtn");
@@ -313,8 +327,12 @@ function tick() {
   timer = setTimeout(tick, TICK);
   if (paused || video.readyState < 2 || !video.videoWidth) return;
   const s = limits(), need = +cfg.wait;
-  const cur = gray(), d = prev ? diff(prev, cur) : 99; prev = cur;
-  calm = d >= 99 ? d : calm * 0.5 + d * 0.5;          // afgevlakt: één schokje breekt het wachten niet af
+  const cur = gray();
+  if (prev && prev.length !== cur.length) {          // telefoon gedraaid: beeld wisselde staand <-> liggend
+    prev = null; lastShot = null; stillSince = 0; state = "first"; layoutGuide();
+  }
+  const d = prev ? diff(prev, cur) : 99; prev = cur;
+  calm = (d >= 99 || !isFinite(calm)) ? d : calm * 0.5 + d * 0.5;          // afgevlakt: één schokje breekt het wachten niet af
   let lum = 0; for (let i = 0; i < cur.length; i++) lum += cur[i]; lum /= cur.length;
   if (lum < 30) { stillSince = 0; setState("wait", "Te donker – camera start op of lens is bedekt"); return; }   // geen zwarte scans
   $("move").textContent = "beweging " + Math.min(calm, 99).toFixed(1);
@@ -461,34 +479,86 @@ async function pagesOf(rec) {
   } else parts.push(c);
   return parts;
 }
-async function exportBatch(ids, a, z, btn) {
-  btn.disabled = true; const old = btn.textContent;
-  try {
-    const { jsPDF } = window.jspdf; let doc = null;
-    for (let i = 0; i < ids.length; i++) {
-      $("expStatus").textContent = `Bezig: scan ${a + i} van ${z}…`;
-      const rec = await getScan(ids[i]);
-      for (const p of await pagesOf(rec)) {
-        const pw = p.width * 72 / 300, ph = p.height * 72 / 300;       // paginaformaat bij ~300 dpi
-        const o = pw > ph ? "l" : "p";
-        if (!doc) doc = new jsPDF({ unit: "pt", format: [pw, ph], orientation: o, compress: true });
-        else doc.addPage([pw, ph], o);
-        doc.addImage(p.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, pw, ph);
-        p.width = p.height = 0;
-      }
-    }
-    const name = `scans-${String(a).padStart(3, "0")}-${String(z).padStart(3, "0")}.pdf`;
-    const file = new File([doc.output("blob")], name, { type: "application/pdf" });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      $("expStatus").textContent = "Kies ‘Bewaar in Bestanden’ of AirDrop naar je pc.";
-      await navigator.share({ files: [file], title: name }).catch(() => {});
-    } else {
-      const u = URL.createObjectURL(file), l = document.createElement("a"); l.href = u; l.download = name; l.click();
-    }
-    $("expStatus").textContent = `${name} klaar.`;
-  } catch (e) { $("expStatus").textContent = "Export mislukt: " + e.message; }
-  btn.disabled = false; btn.textContent = old;
+// Stap 1: PDF maken. Stap 2: jij tikt op de groene knop. iOS opent het deelmenu alleen direct na een tik,
+// en na lang rekenen is die tik "verlopen" — daarom twee knoppen.
+//
+// De PDF wordt pagina voor pagina opgebouwd uit losse JPEG-stukken (Blobs). Er staat nooit een heel boek als
+// tekst in het geheugen, zodat ook honderden pagina's in één keer lukken.
+let pdfFile = null, busy = false;
+async function jpegBlob(canvas) { return new Promise(r => canvas.toBlob(r, "image/jpeg", 0.86)); }
+function pdfWriter() {
+  const enc = new TextEncoder(), parts = [], offs = [], kids = [];
+  let pos = 0, next = 3;
+  const put = x => { const b = typeof x === "string" ? enc.encode(x) : x; parts.push(b); pos += b.size !== undefined ? b.size : b.length; };
+  const open = n => { offs[n] = pos; put(`${n} 0 obj\n`); };
+  put("%PDF-1.4\n%âãÏÓ\n");
+  return {
+    addPage(jpeg, w, h) {                       // jpeg = Blob, w/h in pixels; pagina op ~300 dpi
+      const pw = (w * 72 / 300).toFixed(2), ph = (h * 72 / 300).toFixed(2);
+      const img = next++, cont = next++, page = next++;
+      open(img);
+      put(`<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.size} >>\nstream\n`);
+      put(jpeg); put("\nendstream\nendobj\n");
+      const cs = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+      open(cont); put(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream\nendobj\n`);
+      open(page); put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${img} 0 R >> >> /Contents ${cont} 0 R >>\nendobj\n`);
+      kids.push(page);
+    },
+    finish(name) {
+      open(2); put(`<< /Type /Pages /Kids [${kids.map(k => k + " 0 R").join(" ")}] /Count ${kids.length} >>\nendobj\n`);
+      open(1); put("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+      const xref = pos; let t = `xref\n0 ${next}\n0000000000 65535 f \n`;
+      for (let n = 1; n < next; n++) t += String(offs[n]).padStart(10, "0") + " 00000 n \n";
+      put(t + `trailer\n<< /Size ${next} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+      return new File(parts, name, { type: "application/pdf" });
+    },
+    get pages() { return kids.length; },
+  };
 }
+async function exportRange(a, z) {
+  if (busy) return; busy = true;
+  const btns = [$("allBtn"), $("rangeBtn")]; btns.forEach(b => b.disabled = true);
+  $("saveBtn").hidden = true; pdfFile = null;
+  let lock = null; try { lock = await navigator.wakeLock.request("screen"); } catch (e) {}   // scherm aan tijdens het maken
+  try {
+    const ids = scanIds.slice(a - 1, z), pdf = pdfWriter(), t0 = performance.now();
+    for (let i = 0; i < ids.length; i++) {
+      const left = i ? Math.round((performance.now() - t0) / i * (ids.length - i) / 1000) : null;
+      $("expStatus").textContent = `PDF maken: scan ${a + i} van ${z}` + (left !== null ? ` · nog ± ${left < 60 ? left + " s" : Math.ceil(left / 60) + " min"}` : "");
+      const rec = await getScan(ids[i]);
+      for (const p of await pagesOf(rec)) { pdf.addPage(await jpegBlob(p), p.width, p.height); p.width = p.height = 0; }
+    }
+    const name = (a === 1 && z === scanIds.length ? "boek" : "scans") + `-${String(a).padStart(3, "0")}-${String(z).padStart(3, "0")}.pdf`;
+    pdfFile = pdf.finish(name);
+    $("saveBtn").textContent = `Bewaar ${name} (${pdf.pages} pagina's, ${(pdfFile.size / 1048576).toFixed(0)} MB)`;
+    $("saveBtn").hidden = false;
+    $("expStatus").textContent = "Klaar. Tik op de groene knop om de PDF te bewaren.";
+  } catch (e) { $("expStatus").textContent = "PDF maken mislukt: " + (e && e.message || e); }
+  try { lock && lock.release(); } catch (e) {}
+  btns.forEach(b => b.disabled = false); busy = false;
+}
+$("allBtn").onclick = () => exportRange(1, scanIds.length);
+$("rangeBtn").onclick = () => {
+  const n = scanIds.length;
+  let a = Math.round(+$("from").value), z = Math.round(+$("to").value);
+  if (!(a >= 1 && z >= a && z <= n)) { $("expStatus").textContent = `Kies een bereik tussen 1 en ${n}, met "van" niet groter dan "t/m".`; return; }
+  exportRange(a, z);
+};
+$("to").addEventListener("input", () => { $("to").dataset.auto = "0"; });
+$("saveBtn").onclick = async () => {
+  const file = pdfFile; if (!file) return;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: file.name });
+      $("expStatus").textContent = `${file.name} bewaard.`; return;
+    }
+    throw new Error("delen niet beschikbaar");
+  } catch (e) {
+    if (e && e.name === "AbortError") { $("expStatus").textContent = "Bewaren geannuleerd. Tik nog eens op de groene knop."; return; }
+    const u = URL.createObjectURL(file), l = document.createElement("a"); l.href = u; l.download = file.name; l.target = "_blank"; l.click();
+    $("expStatus").textContent = "Deelmenu werkte niet (" + (e && e.name || "fout") + "). De PDF wordt geopend: bewaar hem via het deel-icoon.";
+  }
+};
 
 // ---------- offline ----------
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
