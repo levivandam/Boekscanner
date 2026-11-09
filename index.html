@@ -70,6 +70,9 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 #meterFill { height: 100%; width: 0; background: var(--go); transition: width .12s linear }
 .hudbtn { background: rgba(0,0,0,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 12px; padding: 13px 16px; font-weight: 700 }
 .hudbtn.go { background: var(--go); color: var(--go-ink) }
+.info { position: absolute; left: 0; right: 0; bottom: calc(var(--sab) + 100px); display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
+  padding-left: max(14px, var(--sal)); padding-right: max(14px, var(--sar)) }
+.info .pill { font-size: 13px; padding: 5px 11px; font-variant-numeric: tabular-nums }
 #err { position: absolute; inset: auto 16px 50% 16px; background: var(--panel); border: 1px solid var(--bad); border-radius: 12px; padding: 16px }
 </style>
 </head>
@@ -92,6 +95,10 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
     <div class="row">
       <label>Draaien bij export<small>Als je scans op hun kant liggen</small></label>
       <div class="seg" data-key="rotate"><button data-v="0">0°</button><button data-v="90">90°</button><button data-v="180">180°</button><button data-v="270">270°</button></div>
+    </div>
+    <div class="row">
+      <label>Telefoon<small>In de hand negeert hij kleine trillingen van je hand</small></label>
+      <div class="seg" data-key="hold"><button data-v="hand">in de hand</button><button data-v="stand">op standaard</button></div>
     </div>
     <div class="row">
       <label>Wachttijd<small>Hoe lang het beeld stil moet zijn voor een scan</small></label>
@@ -130,9 +137,9 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
     <span class="pill" id="state"><span id="dot"></span><span id="stateText">Camera starten…</span></span>
   </div>
   <div id="meter"><div id="meterFill"></div></div>
+  <div class="info"><span class="pill" id="res"></span><span class="pill" id="move">beweging –</span></div>
   <div class="hud bottom">
     <button class="hudbtn" id="pauseBtn">Pauze</button>
-    <span class="pill" id="res"></span>
     <button class="hudbtn" id="shotBtn">Scan nu</button>
     <button class="hudbtn go" id="stopBtn">Klaar</button>
   </div>
@@ -143,14 +150,18 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 <script>
 "use strict";
 // ---------- instellingen ----------
-const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal" };
+const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal", hold: "hand" };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("bs-cfg") || "{}")); } catch (e) {}
-const SENS = { // gemiddeld verschil per pixel (0-255) tussen opeenvolgende kleine beelden
-  laag:    { move: 12, still: 2.0, change: 5.0 },
-  normaal: { move: 8,  still: 2.5, change: 3.5 },
-  hoog:    { move: 5,  still: 3.0, change: 2.5 },
-};
+// Drempels: gemiddeld verschil per pixel (0-255) tussen twee opeenvolgende, sterk verkleinde en vervaagde beelden.
+// move   = zoveel beweging telt als "pagina wordt omgeslagen"
+// still  = daaronder telt het beeld als rustig genoeg voor een scan (in de hand ruimer, door trillen)
+// change = zoveel moet de nieuwe pagina verschillen van de vorige scan
+function limits() {
+  const base = cfg.hold === "stand" ? { move: 8, still: 2.5, change: 3.5 } : { move: 12, still: 4.5, change: 4 };
+  const k = { laag: 1.35, normaal: 1, hoog: 0.75 }[cfg.sens] || 1;   // hoog = reageert op minder beweging
+  return { move: base.move * k, still: base.still * (cfg.hold === "stand" ? 1 : 1 / Math.sqrt(k)), change: base.change };
+}
 document.querySelectorAll(".seg").forEach(seg => {
   const key = seg.dataset.key;
   const paint = () => seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === cfg[key])));
@@ -250,7 +261,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 const video = $("video");
 const small = document.createElement("canvas"), sctx = small.getContext("2d", { willReadFrequently: true });
 let stream = null, running = false, paused = false, timer = null;
-let prev = null, lastShot = null, state = "first", stillSince = 0, count = 0;
+let prev = null, lastShot = null, state = "first", stillSince = 0, count = 0, calm = 0;
 const TICK = 120;
 
 function setState(kind, text) {
@@ -258,12 +269,20 @@ function setState(kind, text) {
   $("dot").style.background = { wait: "var(--muted)", hold: "var(--warn)", shot: "var(--go)", pause: "var(--bad)" }[kind];
 }
 function gray() {
-  const w = 96, h = Math.round(96 * video.videoHeight / video.videoWidth) || 72;
+  // klein en vervaagd beeld: kleine verschuivingen door een trillende hand tellen dan nauwelijks mee
+  const w = 32, h = Math.round(32 * video.videoHeight / video.videoWidth) || 24;
   if (small.width !== w || small.height !== h) { small.width = w; small.height = h; }
   sctx.drawImage(video, 0, 0, w, h);
-  const d = sctx.getImageData(0, 0, w, h).data, g = new Uint8Array(w * h);
-  for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
-  return g;
+  const d = sctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h), b = new Uint8Array(w * h);
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) / 256;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < h && xx >= 0 && xx < w) { s += g[yy * w + xx]; n++; }
+    }
+    b[y * w + x] = s / n;
+  }
+  return b;
 }
 const diff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
 
@@ -271,8 +290,10 @@ function tick() {
   if (!running) return;
   timer = setTimeout(tick, TICK);
   if (paused || video.readyState < 2 || !video.videoWidth) return;
-  const s = SENS[cfg.sens] || SENS.normaal, need = +cfg.wait;
+  const s = limits(), need = +cfg.wait;
   const cur = gray(), d = prev ? diff(prev, cur) : 99; prev = cur;
+  calm = d >= 99 ? d : calm * 0.5 + d * 0.5;          // afgevlakt: één schokje breekt het wachten niet af
+  $("move").textContent = "beweging " + Math.min(calm, 99).toFixed(1);
   const now = performance.now();
   if (state === "waiting") {                       // na een scan: wacht tot er een hand / pagina beweegt
     $("meterFill").style.width = "0%";
@@ -280,7 +301,7 @@ function tick() {
     return;
   }
   // "first" of "moving": wacht tot het beeld stil ligt
-  if (d < s.still) {
+  if (calm < s.still) {
     if (!stillSince) stillSince = now;
     const pct = Math.min(100, (now - stillSince) / need * 100);
     $("meterFill").style.width = pct + "%";
