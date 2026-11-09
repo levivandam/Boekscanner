@@ -132,6 +132,10 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 
   <section class="sec">
     <h2>Exporteren als PDF</h2>
+    <div class="row">
+      <label>In de PDF<small>"Hele opname": beide pagina's samen, rechtop gedraaid. Het splitsen doet het pc-script dan nauwkeuriger.</small></label>
+      <div class="seg" data-key="cut"><button data-v="0">hele opname</button><button data-v="1">2 pagina's</button></div>
+    </div>
     <button class="big" id="allBtn" disabled>Exporteer alles</button>
     <div class="range">
       <label for="from">Van scan</label><input id="from" type="number" inputmode="numeric" min="1" value="1">
@@ -180,7 +184,7 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 <script>
 "use strict";
 // ---------- instellingen ----------
-const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal", hold: "hand" };
+const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal", hold: "hand", cut: "0" };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("bs-cfg") || "{}")); } catch (e) {}
 if (cfg.rotate !== "0" && cfg.rotate !== "180") cfg.rotate = "0";   // oude instellingen (90/270) bestaan niet meer
@@ -203,7 +207,7 @@ document.querySelectorAll(".seg").forEach(seg => {
     const b = e.target.closest("button"); if (!b) return;
     cfg[key] = b.dataset.v; paint();
     try { localStorage.setItem("bs-cfg", JSON.stringify(cfg)); } catch (e) {}
-    if (key === "rotate" || key === "split") renderGrid();
+    if (key === "rotate" || key === "split" || key === "cut") renderGrid();
   });
   paint();
 });
@@ -470,7 +474,7 @@ async function pagesOf(rec) {
   const x = c.getContext("2d"); x.translate(W / 2, H / 2); x.rotate(rot * Math.PI / 180); x.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
   bmp.close && bmp.close();
   const parts = [];
-  if (cfg.split === "1") {                                   // links en rechts van de rug
+  if (cfg.split === "1" && cfg.cut === "1") {               // links en rechts van de rug
     const cut = findGutter(c), ov = Math.round(W * 0.015);   // kleine overlap, zodat tekst bij de vouw nooit wegvalt
     for (const [sx, w] of [[0, cut + ov], [cut - ov, W - cut + ov]]) {
       const p = document.createElement("canvas"); p.width = w; p.height = H;
