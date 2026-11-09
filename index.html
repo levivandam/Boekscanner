@@ -55,6 +55,13 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 /* ---------- scannen ---------- */
 #scan { position: fixed; inset: 0; background: #000 }
 #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain }
+#guide { position: absolute; pointer-events: none }
+#guide .pg { position: absolute; border: 2px dashed rgba(61,220,151,.9); border-radius: 6px }
+#guide .band { position: absolute; background: rgba(150,160,155,.30); display: flex; align-items: center; justify-content: center;
+  border: 1px dashed rgba(255,255,255,.75) }
+#guide .band.v { border-top: 0; border-bottom: 0 }
+#guide .band.h { border-left: 0; border-right: 0; align-items: center; justify-content: flex-start }
+#guide .band span { font-size: 11px; font-weight: 700; color: #fff; background: rgba(0,0,0,.55); padding: 2px 6px; border-radius: 4px; margin: 6px; white-space: nowrap }
 #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .35s }
 #flash.on { opacity: .8; transition: none }
 .hud { position: absolute; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px;
@@ -73,6 +80,10 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 .info { position: absolute; left: 0; right: 0; bottom: calc(var(--sab) + 100px); display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
   padding-left: max(14px, var(--sal)); padding-right: max(14px, var(--sar)) }
 .info .pill { font-size: 13px; padding: 5px 11px; font-variant-numeric: tabular-nums }
+@media (orientation: landscape) {
+  .info { bottom: auto; top: calc(var(--sat) + 64px); right: auto; flex-direction: column; align-items: flex-start }
+  #meter { bottom: calc(var(--sab) + 30px) }
+}
 #err { position: absolute; inset: auto 16px 50% 16px; background: var(--panel); border: 1px solid var(--bad); border-radius: 12px; padding: 16px }
 </style>
 </head>
@@ -89,7 +100,7 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
   <section class="sec">
     <h2>Instellingen</h2>
     <div class="row">
-      <label>Per scan<small>Een opengeslagen boek wordt bij export in twee pagina's gesplitst</small></label>
+      <label>Per scan<small>Bij 2 pag.: leg de rug in de grijze strook, de app knipt op de vouw</small></label>
       <div class="seg" data-key="split"><button data-v="1">2 pag.</button><button data-v="0">1 pag.</button></div>
     </div>
     <div class="row">
@@ -131,6 +142,10 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 
 <section id="scan" hidden>
   <video id="video" playsinline muted autoplay></video>
+  <div id="guide" aria-hidden="true">
+    <div class="pg" id="pgA"></div><div class="pg" id="pgB"></div>
+    <div class="band" id="band"><span>rug hier</span></div>
+  </div>
   <div id="flash"></div>
   <div class="hud top">
     <span class="pill" id="counter">0</span>
@@ -293,6 +308,8 @@ function tick() {
   const s = limits(), need = +cfg.wait;
   const cur = gray(), d = prev ? diff(prev, cur) : 99; prev = cur;
   calm = d >= 99 ? d : calm * 0.5 + d * 0.5;          // afgevlakt: één schokje breekt het wachten niet af
+  let lum = 0; for (let i = 0; i < cur.length; i++) lum += cur[i]; lum /= cur.length;
+  if (lum < 30) { stillSince = 0; setState("wait", "Te donker – camera start op of lens is bedekt"); return; }   // geen zwarte scans
   $("move").textContent = "beweging " + Math.min(calm, 99).toFixed(1);
   const now = performance.now();
   if (state === "waiting") {                       // na een scan: wacht tot er een hand / pagina beweegt
@@ -346,7 +363,7 @@ async function startScan() {
   await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, { once: true }));
   const long = Math.max(video.videoWidth, video.videoHeight);
   $("res").textContent = `${video.videoWidth}×${video.videoHeight}` + (long >= 3800 ? " · 4K" : long >= 1900 ? " · Full HD" : " · laag");
-  keepAwake();
+  layoutGuide(); keepAwake();
   running = true; paused = false; prev = null; lastShot = null; stillSince = 0; state = "first";
   setState("hold", "Houd stil voor de eerste scan");
   tick();
@@ -365,6 +382,50 @@ $("pauseBtn").onclick = () => {
   if (paused) setState("pause", "Gepauzeerd"); else { state = "waiting"; prev = null; setState("wait", "Sla om om verder te gaan"); }
 };
 
+// ---------- hulplijnen: waar moeten de pagina's en de rug liggen ----------
+const BAND = 0.16;                         // breedte van de grijze strook waarbinnen de rug mag liggen
+function place(el, l, t, w, h) { Object.assign(el.style, { left: l * 100 + "%", top: t * 100 + "%", width: w * 100 + "%", height: h * 100 + "%" }); }
+function layoutGuide() {
+  const g = $("guide"); if (!video.videoWidth) { g.hidden = true; return; }
+  g.hidden = false;
+  const W = video.clientWidth, H = video.clientHeight, ar = video.videoWidth / video.videoHeight;
+  const w = Math.min(W, H * ar), h = w / ar;            // zichtbaar camerabeeld binnen het scherm
+  Object.assign(g.style, { left: (W - w) / 2 + "px", top: (H - h) / 2 + "px", width: w + "px", height: h + "px" });
+  const band = $("band"), A = $("pgA"), B = $("pgB"), m = 0.04, lo = 0.5 - BAND / 2, hi = 0.5 + BAND / 2;
+  if (cfg.split !== "1") { band.hidden = true; B.hidden = true; place(A, m, m, 1 - 2 * m, 1 - 2 * m); return; }
+  band.hidden = false; B.hidden = false;
+  if (cfg.rotate === "90" || cfg.rotate === "270") {   // boek ligt dwars: rug loopt horizontaal door het beeld
+    band.className = "band h"; place(band, 0, lo, 1, BAND);
+    place(A, m, m, 1 - 2 * m, lo - m); place(B, m, hi, 1 - 2 * m, 1 - hi - m);
+  } else {
+    band.className = "band v"; place(band, lo, 0, BAND, 1);
+    place(A, m, m, lo - m, 1 - 2 * m); place(B, hi, m, 1 - hi - m, 1 - 2 * m);
+  }
+}
+window.addEventListener("resize", layoutGuide);
+video.addEventListener("loadedmetadata", layoutGuide);
+document.querySelectorAll(".seg").forEach(s => s.addEventListener("click", layoutGuide));
+
+// Zoek de rug binnen de grijze strook: de vouw is een smalle donkere "vallei" tussen twee lichte pagina's.
+function findGutter(c) {
+  const sw = 400, sh = Math.max(1, Math.round(400 * c.height / c.width));
+  const t = document.createElement("canvas"); t.width = sw; t.height = sh;
+  const x = t.getContext("2d", { willReadFrequently: true }); x.drawImage(c, 0, 0, sw, sh);
+  const d = x.getImageData(0, 0, sw, sh).data, y0 = Math.floor(sh * 0.2), y1 = Math.ceil(sh * 0.8);
+  const col = new Float32Array(sw), sm = new Float32Array(sw);
+  for (let cx = 0; cx < sw; cx++) { let s = 0; for (let y = y0; y < y1; y++) { const i = (y * sw + cx) * 4; s += d[i] + d[i + 1] + d[i + 2]; } col[cx] = s / (y1 - y0) / 3; }
+  for (let cx = 0; cx < sw; cx++) sm[cx] = (col[Math.max(0, cx - 1)] + col[cx] + col[Math.min(sw - 1, cx + 1)]) / 3;
+  const p75 = (a, b) => { const v = Array.from(sm.slice(Math.max(0, a), Math.min(sw, b))).sort((p, q) => p - q); return v[Math.floor(v.length * 0.75)] || 0; };
+  const a = Math.floor(sw * (0.5 - BAND / 2)), b = Math.ceil(sw * (0.5 + BAND / 2));
+  let best = Math.round(sw / 2), top = 0;
+  for (let cx = a; cx <= b; cx++) {
+    const score = Math.min(p75(cx - 25, cx - 4), p75(cx + 4, cx + 25)) - sm[cx];   // dieper dan allebei de kanten
+    if (score > top) { top = score; best = cx; }
+  }
+  if (top < 4) best = Math.round(sw / 2);            // geen duidelijke vouw gevonden: midden van de strook
+  return Math.round(best / sw * c.width);
+}
+
 // ---------- export naar PDF ----------
 async function pagesOf(rec) {
   const bmp = await createImageBitmap(rec.full);
@@ -375,10 +436,10 @@ async function pagesOf(rec) {
   bmp.close && bmp.close();
   const parts = [];
   if (cfg.split === "1") {                                   // links en rechts van de rug
-    const half = Math.floor(W / 2);
-    for (const sx of [0, half]) {
-      const p = document.createElement("canvas"); p.width = half; p.height = H;
-      p.getContext("2d").drawImage(c, sx, 0, half, H, 0, 0, half, H); parts.push(p);
+    const cut = findGutter(c), ov = Math.round(W * 0.015);   // kleine overlap, zodat tekst bij de vouw nooit wegvalt
+    for (const [sx, w] of [[0, cut + ov], [cut - ov, W - cut + ov]]) {
+      const p = document.createElement("canvas"); p.width = w; p.height = H;
+      p.getContext("2d").drawImage(c, sx, 0, w, H, 0, 0, w, H); parts.push(p);
     }
   } else parts.push(c);
   return parts;

@@ -1,5 +1,5 @@
 // Bewaart de app zodat hij ook zonder internet opent. Verhoog het versienummer bij een update.
-const CACHE = "boekscanner-v2";
+const CACHE = "boekscanner-v4";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "jspdf.umd.min.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
