@@ -57,6 +57,8 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain }
 #guide { position: absolute; pointer-events: none }
 #guide .pg { position: absolute; border: 2px dashed rgba(61,220,151,.9); border-radius: 6px }
+#guide .pg span { position: absolute; left: 6px; top: 6px; font-size: 12px; font-weight: 700; color: var(--go-ink); background: var(--go);
+  padding: 2px 7px; border-radius: 4px; white-space: nowrap }
 #guide .band { position: absolute; background: rgba(150,160,155,.30); display: flex; align-items: center; justify-content: center;
   border: 1px dashed rgba(255,255,255,.75) }
 #guide .band.v { border-top: 0; border-bottom: 0 }
@@ -75,7 +77,7 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 #meter { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--sab) + 84px); width: min(60vw, 260px); height: 6px;
   border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden }
 #meterFill { height: 100%; width: 0; background: var(--go); transition: width .12s linear }
-.hudbtn { background: rgba(0,0,0,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 12px; padding: 13px 16px; font-weight: 700 }
+.hudbtn { background: rgba(0,0,0,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-radius: 12px; padding: 12px 13px; font-weight: 700; white-space: nowrap }
 .hudbtn.go { background: var(--go); color: var(--go-ink) }
 .info { position: absolute; left: 0; right: 0; bottom: calc(var(--sab) + 100px); display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
   padding-left: max(14px, var(--sal)); padding-right: max(14px, var(--sar)) }
@@ -104,8 +106,8 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
       <div class="seg" data-key="split"><button data-v="1">2 pag.</button><button data-v="0">1 pag.</button></div>
     </div>
     <div class="row">
-      <label>Draaien bij export<small>Als je scans op hun kant liggen</small></label>
-      <div class="seg" data-key="rotate"><button data-v="0">0°</button><button data-v="90">90°</button><button data-v="180">180°</button><button data-v="270">270°</button></div>
+      <label>Omdraaien<small>Kan ook tijdens het scannen met ↻ Wissel: het kader "linkerpagina" moet op je linkerpagina liggen</small></label>
+      <div class="seg" data-key="rotate"><button data-v="0">normaal</button><button data-v="180">180°</button></div>
     </div>
     <div class="row">
       <label>Telefoon<small>In de hand negeert hij kleine trillingen van je hand</small></label>
@@ -143,7 +145,7 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 <section id="scan" hidden>
   <video id="video" playsinline muted autoplay></video>
   <div id="guide" aria-hidden="true">
-    <div class="pg" id="pgA"></div><div class="pg" id="pgB"></div>
+    <div class="pg" id="pgA"><span></span></div><div class="pg" id="pgB"><span></span></div>
     <div class="band" id="band"><span>rug hier</span></div>
   </div>
   <div id="flash"></div>
@@ -155,6 +157,7 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
   <div class="info"><span class="pill" id="res"></span><span class="pill" id="move">beweging –</span></div>
   <div class="hud bottom">
     <button class="hudbtn" id="pauseBtn">Pauze</button>
+    <button class="hudbtn" id="flipBtn" aria-label="Draai de pagina's 180 graden">↻ Wissel</button>
     <button class="hudbtn" id="shotBtn">Scan nu</button>
     <button class="hudbtn go" id="stopBtn">Klaar</button>
   </div>
@@ -168,6 +171,10 @@ h1 { font-size: 28px; margin: 0; letter-spacing: -.01em }
 const DEF = { split: "1", rotate: "0", wait: "800", sens: "normaal", hold: "hand" };
 let cfg = { ...DEF };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("bs-cfg") || "{}")); } catch (e) {}
+if (cfg.rotate !== "0" && cfg.rotate !== "180") cfg.rotate = "0";   // oude instellingen (90/270) bestaan niet meer
+// Hoeveel graden een scan gedraaid moet worden. Bij 2 pagina's moet het opengeslagen boek liggend in beeld komen:
+// is de camerafoto staand (telefoon dwars, maar beeld rechtop), dan ligt het boek op zijn kant en draaien we 90° terug.
+function turnOf(w, h) { return ((cfg.split === "1" && h > w ? 90 : 0) + +cfg.rotate) % 360; }
 // Drempels: gemiddeld verschil per pixel (0-255) tussen twee opeenvolgende, sterk verkleinde en vervaagde beelden.
 // move   = zoveel beweging telt als "pagina wordt omgeslagen"
 // still  = daaronder telt het beeld als rustig genoeg voor een scan (in de hand ruimer, door trillen)
@@ -184,7 +191,7 @@ document.querySelectorAll(".seg").forEach(seg => {
     const b = e.target.closest("button"); if (!b) return;
     cfg[key] = b.dataset.v; paint();
     try { localStorage.setItem("bs-cfg", JSON.stringify(cfg)); } catch (e) {}
-    if (key === "rotate") renderGrid();
+    if (key === "rotate" || key === "split") renderGrid();
   });
   paint();
 });
@@ -211,7 +218,7 @@ async function allScans(withFull) {
     const out = [], t = db.transaction("scans", "readonly");
     t.objectStore("scans").openCursor().onsuccess = e => {
       const c = e.target.result;
-      if (c) { const v = c.value; out.push(withFull ? v : { id: v.id, thumb: v.thumb }); c.continue(); } else res(out);
+      if (c) { const v = c.value; out.push(withFull ? v : { id: v.id, thumb: v.thumb, w: v.w, h: v.h }); c.continue(); } else res(out);
     };
     t.onerror = () => rej(t.error);
   });
@@ -230,7 +237,7 @@ async function renderGrid() {
   scans.forEach((s, i) => {
     const b = document.createElement("button"); b.className = "thumb";
     const u = URL.createObjectURL(s.thumb); urls.push(u);
-    b.innerHTML = `<img alt="Scan ${i + 1}" src="${u}" style="transform:rotate(${cfg.rotate}deg)"><span>${i + 1}</span>`;
+    b.innerHTML = `<img alt="Scan ${i + 1}" src="${u}" style="transform:rotate(${turnOf(s.w, s.h)}deg)"><span>${i + 1}</span>`;
     b.onclick = async () => {
       if (b.classList.contains("ask")) { await delScan(s.id); renderGrid(); }
       else { document.querySelectorAll(".thumb.ask").forEach(x => x.classList.remove("ask")); b.classList.add("ask"); setTimeout(() => b.classList.remove("ask"), 3000); }
@@ -376,6 +383,12 @@ async function stopScan() {
 }
 $("startBtn").onclick = startScan;
 $("stopBtn").onclick = stopScan;
+$("flipBtn").onclick = () => {
+  cfg.rotate = cfg.rotate === "180" ? "0" : "180";
+  try { localStorage.setItem("bs-cfg", JSON.stringify(cfg)); } catch (e) {}
+  document.querySelectorAll('.seg[data-key="rotate"] button').forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === cfg.rotate)));
+  layoutGuide();
+};
 $("shotBtn").onclick = () => { if (running && video.videoWidth) { lastShot = gray(); capture(); state = "waiting"; } };
 $("pauseBtn").onclick = () => {
   paused = !paused; $("pauseBtn").textContent = paused ? "Verder" : "Pauze";
@@ -392,9 +405,13 @@ function layoutGuide() {
   const w = Math.min(W, H * ar), h = w / ar;            // zichtbaar camerabeeld binnen het scherm
   Object.assign(g.style, { left: (W - w) / 2 + "px", top: (H - h) / 2 + "px", width: w + "px", height: h + "px" });
   const band = $("band"), A = $("pgA"), B = $("pgB"), m = 0.04, lo = 0.5 - BAND / 2, hi = 0.5 + BAND / 2;
-  if (cfg.split !== "1") { band.hidden = true; B.hidden = true; place(A, m, m, 1 - 2 * m, 1 - 2 * m); return; }
+  const [la, lb] = [A.firstElementChild, B.firstElementChild];
+  if (cfg.split !== "1") { band.hidden = true; B.hidden = true; la.textContent = "pagina"; place(A, m, m, 1 - 2 * m, 1 - 2 * m); return; }
+  // Welk kader wordt na het draaien de linkerpagina? Dat moet op het boek kloppen; zo niet: Wissel.
+  const r = turnOf(video.videoWidth, video.videoHeight), aIsLeft = r === 0 || r === 270;
+  la.textContent = aIsLeft ? "linkerpagina" : "rechterpagina"; lb.textContent = aIsLeft ? "rechterpagina" : "linkerpagina";
   band.hidden = false; B.hidden = false;
-  if (cfg.rotate === "90" || cfg.rotate === "270") {   // boek ligt dwars: rug loopt horizontaal door het beeld
+  if (turnOf(video.videoWidth, video.videoHeight) % 180 === 90) {   // boek ligt op zijn kant in beeld: rug loopt horizontaal
     band.className = "band h"; place(band, 0, lo, 1, BAND);
     place(A, m, m, 1 - 2 * m, lo - m); place(B, m, hi, 1 - 2 * m, 1 - hi - m);
   } else {
@@ -429,7 +446,7 @@ function findGutter(c) {
 // ---------- export naar PDF ----------
 async function pagesOf(rec) {
   const bmp = await createImageBitmap(rec.full);
-  const rot = +cfg.rotate, swap = rot === 90 || rot === 270;
+  const rot = turnOf(bmp.width, bmp.height), swap = rot === 90 || rot === 270;
   const W = swap ? bmp.height : bmp.width, H = swap ? bmp.width : bmp.height;
   const c = document.createElement("canvas"); c.width = W; c.height = H;
   const x = c.getContext("2d"); x.translate(W / 2, H / 2); x.rotate(rot * Math.PI / 180); x.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
